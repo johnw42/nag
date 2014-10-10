@@ -22,6 +22,9 @@ class App(object):
     self.key_sequence = KeySequence()
     self.nag_interval = 300
     self.nag_header = '\nReminders:'
+    self.use_git = True
+
+    os.environ.pop('GIT_DIR', None)
 
     # for path in xdgbase.load_config_paths(APP_NAME, 'config.py'):
     #   with file(path) as stream:
@@ -63,6 +66,15 @@ class App(object):
     parser_rm.add_argument('key', nargs='+')
     parser_rm.set_defaults(func=self.DoRm)
 
+    parser_log = subparsers.add_parser(
+        'log', description='Show a change log.')
+    parser_log.set_defaults(func=self.DoLog)
+
+    parser_git = subparsers.add_parser(
+        'git', description='Run a git command.')
+    parser_git.add_argument('command', nargs=argparse.REMAINDER)
+    parser_git.set_defaults(func=self.DoGit)
+
     parser_help = subparsers.add_parser(
         'help', description='Show help.')
     parser_help.set_defaults(func=self.DoHelp)
@@ -82,6 +94,7 @@ class App(object):
       last_key = keys[-1]
       next_key = self.key_sequence.Next(keys[-1])
     self._SetNag(next_key, ' '.join(args.message))
+    self._GitCommit('added reminder: ' + next_key)
     print 'reminder saved as', next_key
 
   def DoShow(self, args):
@@ -108,6 +121,7 @@ class App(object):
       filename = self._NagFile(key)
       if os.path.isfile(filename):
         os.unlink(filename)
+    self._GitCommit('deleted reminders: ' + ' '.join(args.key))
 
   def DoHelp(self, args):
     print """\
@@ -122,6 +136,32 @@ Create a new reminder:
 Clear the remidner with
 
   nag rm X"""
+
+  def DoLog(self, args):
+    self._GitPopen('log').wait()
+
+  def DoGit(self, args):
+    p = self._GitPopen(*args.command)
+    p.wait()
+
+  def _GitCheckCall(self, *command):
+    self._Git(subprocess.check_call, command)
+
+  def _GitCheckOutput(self, *command):
+    self._Git(subprocess.check_output, command)
+
+  def _GitPopen(self, *command, **kwargs):
+    return self._Git(subprocess.Popen, command, **kwargs)
+
+  def _Git(self, func, command, **kwargs):
+    if not self.use_git: return None
+    return func(('git',) + command, cwd=self.nag_home, **kwargs)
+
+  def _GitCommit(self, message):
+    if not os.path.isdir(os.path.join(self.nag_home, '.git')):
+      self._GitCheckCall('init')
+    self._GitCheckCall('add', '--all')
+    self._GitCheckCall('commit', '-q', '-m', message)
 
   def _SetNag(self, key, content):
     filename = self._NagFile(key)
