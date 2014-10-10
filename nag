@@ -1,0 +1,110 @@
+#! /bin/bash
+
+set -e
+IFS=
+
+main() {
+    init
+    if [[ $# = 0 ]]; then
+	show_nags
+	return
+    fi
+
+    local cmd=$1; shift
+    case $cmd in
+	[a-zA-Z0-9]) show_or_set_nag $cmd $@ ;;
+	show_list) show_nags "$@" ;;
+	rm) rm_nags $@ ;;
+	ps1|maybe) maybe_show_nags ;;
+	*) die "unknown commmand: $cmd"
+    esac
+}
+
+init() {
+    unset NAG_NAME NAG_HOME RUNTIME TIMESTAMP
+    NAG_NAME=nag
+    NAG_HOME=${XDG_CONFIG_HOME:=$HOME/.config}/$NAG_NAME
+    RUNTIME=$XDG_RUNTIME_DIR/$NAG_NAME
+    TIMESTAMP=$RUNTIME/timestamp
+    install -d $NAG_HOME/new $TIMESTAMP
+}
+
+show_or_set_nag() {
+    if [[ $# == 1 ]]; then
+	show_nag $1
+    else
+	set_nag $@
+    fi
+}
+
+show_nag() {
+    local file=$NAG_HOME/new/$1
+    if [[ -f $file ]]; then
+	cat $file
+	return
+    fi
+    die "no nag named '$1'"
+}
+
+set_nag() {
+    local key=$1; shift
+    local file=$NAG_HOME/new/$key
+    echo "$@" > $NAG_HOME/new/$key
+    touch $TIMESTAMP
+}
+
+rm_nags() {
+    local key
+    for key in $@; do
+	[[ $key != */* ]]
+	rm -f $NAG_HOME/new/$key
+    done
+}
+
+maybe_show_nags() {
+    local now=$(date +%s)
+    local then=$(date +%s -r $TIMESTAMP)
+    if (( now - then > 5 )); then
+	show_nags_1
+    fi
+}
+
+show_nags() {
+    if [[ $# == 0 ]]; then
+	if ! show_nags_1; then
+	    log "no nags"
+	fi
+    else
+	for key in $@; do
+	    local file=$NAG_HOME/new/$key
+	    if [[ -f $file ]]; then
+		cat $file
+	    else
+		log "no nag named '$1'"
+	    fi
+	done
+    fi
+}
+
+show_nags_1() {
+    local key result=1
+    local IFS='
+'
+    for file in $(find $NAG_HOME/new -type f); do
+	echo "${file##*/}: $(cat $file)"
+	result=0
+    done
+    touch $TIMESTAMP
+    return $result
+}
+
+log() {
+    echo "$(basename $0): $@" >&2
+}
+
+die() {
+    log "$@"
+    exit 1
+}
+
+main "$@"
