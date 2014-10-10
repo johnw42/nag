@@ -1,0 +1,151 @@
+#! /bin/bash
+
+set -e
+set -x
+
+REAL_BASH_VERSION=$BASH_VERSION
+REAL_LOGNAME=$LOGNAME
+unset FOO LOCAL_VAR
+
+global() {
+  declare -g $1
+}
+
+local_x() {
+  declare -x $1
+}
+
+getenv() {
+  env bash -c "echo \$$1"
+}
+
+func_test() {
+  [[ $LOGNAME == $REAL_LOGNAME ]]
+  local LOGNAME
+  [[ $LOGNAME == '' ]]
+  [[ $(getenv LOGNAME) == $REAL_LOGNAME ]]
+
+  export FOO=env_foo
+  [[ $FOO == env_foo ]]
+  [[ $(getenv FOO) == env_foo ]]
+
+  export BASH_VERSION=fake_bash_version
+  [[ $BASH_VERSION == fake_bash_version ]]
+  [[ $(getenv BASH_VERSION) == $REAL_BASH_VERSION ]]
+
+  local LOCAL_VAR=local_value
+
+  inner_func_test
+}
+
+inner_func_test() {
+  [[ $LOCAL_VAR == local_value ]]
+
+  (
+    [[ $BASH_VERSION == fake_bash_version ]]
+    [[ $(getenv BASH_VERSION) == $REAL_BASH_VERSION ]]
+    [[ $FOO == env_foo ]]
+    [[ $(getenv FOO) == env_foo ]]
+  )
+
+  (
+    declare FOO=local_foo
+    (
+      [[ $FOO == local_foo ]]
+      [[ $(getenv FOO) == local_foo ]]
+    )
+  )
+
+  (
+    declare +x FOO=local_foo
+    (
+      [[ $FOO == local_foo ]]
+      [[ $(getenv FOO) == env_foo ]]
+    )
+  )
+
+  (
+    unset FOO
+    FOO=local_foo
+    (
+      [[ $FOO == local_foo ]]
+      [[ $(getenv FOO) == '' ]]
+    )
+  )
+
+
+  (
+    local_x FOO=local_foo
+    (
+      [[ $FOO == env_foo ]]
+      [[ $(getenv FOO) == env_foo ]]
+    )
+  )
+
+  (
+    global FOO=local_foo
+    (
+      [[ $FOO == local_foo ]]
+      [[ $(getenv FOO) == local_foo ]]
+    )
+  )
+}
+
+func_test
+
+export FOO=env_foo
+[[ $FOO == env_foo ]]
+[[ $(getenv FOO) == env_foo ]]
+
+export BASH_VERSION=fake_bash_version
+[[ $BASH_VERSION == fake_bash_version ]]
+[[ $(getenv BASH_VERSION) == $REAL_BASH_VERSION ]]
+
+(
+  [[ $BASH_VERSION == fake_bash_version ]]
+  [[ $(getenv BASH_VERSION) == $REAL_BASH_VERSION ]]
+  [[ $FOO == env_foo ]]
+  [[ $(getenv FOO) == env_foo ]]
+)
+
+(
+  declare FOO=local_foo
+  (
+    [[ $FOO == local_foo ]]
+    [[ $(getenv FOO) == local_foo ]]
+  )
+)
+
+(
+  declare +x FOO=local_foo
+  (
+    [[ $FOO == local_foo ]]
+    [[ $(getenv FOO) == '' ]]
+  )
+)
+
+(
+  unset FOO
+  FOO=local_foo
+  (
+    [[ $FOO == local_foo ]]
+    [[ $(getenv FOO) == '' ]]
+  )
+)
+
+
+(
+  local_x FOO=local_foo
+  (
+    [[ $FOO == env_foo ]]
+    [[ $(getenv FOO) == env_foo ]]
+  )
+)
+
+(
+  global FOO=local_foo
+  (
+    [[ $FOO == local_foo ]]
+    [[ $(getenv FOO) == local_foo ]]
+  )
+)

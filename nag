@@ -1,38 +1,65 @@
 #! /bin/bash
 
 set -e
-IFS=
+IFS='
+'
 
 main() {
-    init
-    if [[ $# = 0 ]]; then
-	show_nags
-	return
-    fi
+  : ${XDG_CONFIG_HOME:=$HOME/.config}
+  local NAG_NAME=nag
+  local NAG_HOME=$XDG_CONFIG_HOME/$NAG_NAME
+  local NAG_FILE_DIR=$NAG_HOME/new
+  local RUNTIME=$XDG_RUNTIME_DIR/$NAG_NAME
+  local TIMESTAMP=$RUNTIME/timestamp
+  local NAG_INTERVAL=300
+  init
 
-    local cmd=$1; shift
-    case $cmd in
-	[a-zA-Z0-9]) show_or_set_nag $cmd $@ ;;
-	show_list) show_nags "$@" ;;
-	rm) rm_nags $@ ;;
-	ps1|maybe) maybe_show_nags ;;
-	help) help ;;
-	*) die "unknown commmand: $cmd"
-    esac
+  if [[ $# = 0 ]]; then
+    show_nags
+    return
+  fi
+
+  local cmd=$1; shift
+  case $cmd in
+    me|push) push_nag "$@" ;;
+    [a-zA-Z0-9]) show_or_set_nag $cmd $@ ;;
+    show|list) show_nags "$@" ;;
+    rm) rm_nags $@ ;;
+    ps1|maybe) maybe_show_nags ;;
+    help) help ;;
+    *) die "unknown commmand: $cmd"
+  esac
+}
+
+config_files() {
+  for dir in $(config_dirs); do
+    for name in $@; do
+      if [[ -f $dir/$name ]]; then
+        echo $dir/$name
+      fi
+    done
+  done
+}
+
+config_dirs() {
+  echo $XDG_CONFIG_HOME
+  local dir IFS=:
+  for dir in $XDG_CONFIG_DIRS; do
+    echo $dir
+  done
 }
 
 init() {
-    unset NAG_NAME NAG_HOME RUNTIME TIMESTAMP
-    NAG_NAME=nag
-    NAG_HOME=${XDG_CONFIG_HOME:=$HOME/.config}/$NAG_NAME
-    RUNTIME=$XDG_RUNTIME_DIR/$NAG_NAME
-    TIMESTAMP=$RUNTIME/timestamp
-    install -d $NAG_HOME/new $TIMESTAMP
+  local file
+  for file in $(config_files $NAG_NAME/config.sh | rev); do
+    source $file
+  done
+  install -d $NAG_FILE_DIR $TIMESTAMP
 }
 
 help() {
-    (
-	cat <<EOF
+  (
+    cat <<EOF
 Add the following to your .bashrc:
 
   PROMPT_COMMAND='nag ps1'
@@ -45,85 +72,92 @@ Clear the remidner with
 
   nag rm X
 EOF
-    ) | ${PAGER:-less}
+  ) | ${PAGER:-less}
 }
 
 show_or_set_nag() {
-    if [[ $# == 1 ]]; then
-	show_nag $1
-    else
-	set_nag $@
-    fi
+  if [[ $# == 1 ]]; then
+    show_nag $1
+  else
+    set_nag $@
+  fi
 }
 
 show_nag() {
-    local file=$NAG_HOME/new/$1
-    if [[ -f $file ]]; then
-	cat $file
-	return
-    fi
-    die "no nag named '$1'"
+  local file=$NAG_FILE_DIR/$1
+  if [[ -f $file ]]; then
+    cat $file
+    return
+  fi
+  die "no nag named '$1'"
 }
 
 set_nag() {
-    local key=$1; shift
-    local file=$NAG_HOME/new/$key
-    echo "$@" > $NAG_HOME/new/$key
-    touch $TIMESTAMP
+  local key=$1; shift
+  local file=$NAG_FILE_DIR/$key
+  echo "$@" > $NAG_FILE_DIR/$key
+  touch $TIMESTAMP
+}
+
+push_nag() {
+  local last_key=$(nag_keys | tail -1)
+  log last_key = $last_key
 }
 
 rm_nags() {
-    local key
-    for key in $@; do
-	[[ $key != */* ]]
-	rm -f $NAG_HOME/new/$key
-    done
+  local key
+  for key in $@; do
+    [[ $key != */* ]]
+    rm -f $NAG_FILE_DIR/$key
+  done
 }
 
 maybe_show_nags() {
-    local now=$(date +%s)
-    local then=$(date +%s -r $TIMESTAMP)
-    if (( now - then > 5 )); then
-	show_nags_1
-    fi
+  local now=$(date +%s)
+  local then=$(date +%s -r $TIMESTAMP)
+  if (( now - then > $NAG_INTERVAL )); then
+    show_nags_1
+  fi
 }
 
 show_nags() {
-    if [[ $# == 0 ]]; then
-	if ! show_nags_1; then
-	    log "no nags"
-	fi
-    else
-	for key in $@; do
-	    local file=$NAG_HOME/new/$key
-	    if [[ -f $file ]]; then
-		cat $file
-	    else
-		log "no nag named '$1'"
-	    fi
-	done
+  if [[ $# == 0 ]]; then
+    if ! show_nags_1; then
+      log "no nags"
     fi
+  else
+    for key in $@; do
+      local file=$NAG_FILE_DIR/$key
+      if [[ -f $file ]]; then
+	cat $file
+      else
+	log "no nag named '$1'"
+      fi
+    done
+  fi
 }
 
 show_nags_1() {
-    local key result=1
-    local IFS='
-'
-    for file in $(find $NAG_HOME/new -type f); do
-	echo "${file##*/}: $(cat $file)"
-	result=0
-    done
-    touch $TIMESTAMP
-    return $result
+  local key result=1
+  for file in $(find $NAG_FILE_DIR -type f | sort -n); do
+    echo "${file##*/}: $(cat $file)"
+    result=0
+  done
+  touch $TIMESTAMP
+  return $result
+}
+
+nag_keys() {
+  find $NAG_FILE_DIR -type f | sort -n | sed 's:.*/::g'
 }
 
 log() {
-    echo "$(basename $0): $@" >&2
+  echo "$(basename $0): $@" >&2
 }
 
 die() {
-    log "$@"
-    exit 1
+  log "$@"
+  exit 1
 }
 
 main "$@"
