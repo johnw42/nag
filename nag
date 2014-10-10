@@ -1,163 +1,183 @@
-#! /bin/bash
+#! /usr/bin/python
+import argparse
+import logging
+import os
+import re
+import subprocess
+import sys
+import xdg.BaseDirectory as xdgbase
+import time
 
-set -e
-IFS='
-'
 
-main() {
-  : ${XDG_CONFIG_HOME:=$HOME/.config}
-  local NAG_NAME=nag
-  local NAG_HOME=$XDG_CONFIG_HOME/$NAG_NAME
-  local NAG_FILE_DIR=$NAG_HOME/new
-  local RUNTIME=$XDG_RUNTIME_DIR/$NAG_NAME
-  local TIMESTAMP=$RUNTIME/timestamp
-  local NAG_INTERVAL=300
-  init
+APP_NAME = 'nag'
 
-  if [[ $# = 0 ]]; then
-    show_nags
-    return
-  fi
 
-  local cmd=$1; shift
-  case $cmd in
-    me|push) push_nag "$@" ;;
-    [a-zA-Z0-9]) show_or_set_nag $cmd $@ ;;
-    show|list) show_nags "$@" ;;
-    rm) rm_nags $@ ;;
-    ps1|maybe) maybe_show_nags ;;
-    help) help ;;
-    *) die "unknown commmand: $cmd"
-  esac
-}
+def main():
+  App().Run()
 
-config_files() {
-  for dir in $(config_dirs); do
-    for name in $@; do
-      if [[ -f $dir/$name ]]; then
-        echo $dir/$name
-      fi
-    done
-  done
-}
 
-config_dirs() {
-  echo $XDG_CONFIG_HOME
-  local dir IFS=:
-  for dir in $XDG_CONFIG_DIRS; do
-    echo $dir
-  done
-}
+class App(object):
 
-init() {
-  local file
-  for file in $(config_files $NAG_NAME/config.sh | rev); do
-    source $file
-  done
-  install -d $NAG_FILE_DIR $TIMESTAMP
-}
+  def __init__(self):
+    self.key_sequence = KeySequence()
+    self.nag_interval = 300
 
-help() {
-  (
-    cat <<EOF
+    for path in xdgbase.load_config_paths(APP_NAME, 'config.py'):
+      with file(path) as stream:
+        exec stream in self.__dict__
+
+    self.nag_home = xdgbase.save_config_path(APP_NAME)
+    self.nag_file_dir = xdgbase.save_config_path(APP_NAME, 'files')
+    self.runtime = os.path.join(xdgbase.get_runtime_dir(), APP_NAME)
+    self.timestamp = os.path.join(self.runtime, 'timestamp')
+
+  def Run(self):
+    parser = argparse.ArgumentParser(description='')
+    parser.add_argument(
+        '--debug', action='store_true',
+        help=argparse.SUPPRESS)
+
+    subparsers = parser.add_subparsers()
+
+    for name in ['push', 'me']:
+      parser_push = subparsers.add_parser(
+          name, description='Adds a new reminder.')
+      parser_push.add_argument('message', nargs=argparse.REMAINDER)
+      parser_push.set_defaults(func=self.DoPush)
+
+    for name in ['show', 'list']:
+      parser_show = subparsers.add_parser(
+          name, description='Show existing reminders.')
+      parser_show.add_argument('key', nargs='*')
+      parser_show.set_defaults(func=self.DoShow)
+
+    for name in ['maybe', 'ps1']:
+      parser_maybe = subparsers.add_parser(
+          name, description='Show reminders (maybe).')
+      parser_maybe.add_argument('key', nargs='?')
+      parser_maybe.set_defaults(func=self.DoMaybe)
+
+    parser_rm = subparsers.add_parser(
+        'rm', description='Delete a reminder.')
+    parser_rm.add_argument('key', nargs='+')
+    parser_rm.set_defaults(func=self.DoRm)
+
+    parser_help = subparsers.add_parser(
+        'help', description='Show help.')
+    parser_help.set_defaults(func=self.DoHelp)
+
+    args = parser.parse_args()
+    if args.debug:
+      logging.basicConfig(level=logging.DEBUG)
+      logging.debug('debug logging enabled')
+
+    args.func(args)
+
+  def DoPush(self, args):
+    keys = self._SortedNagKeys()
+    if not keys:
+      next_key = self.key_sequence.First()
+    else:
+      last_key = keys[-1]
+      next_key = self.key_sequence.Next(keys[-1])
+    self._SetNag(next_key, ' '.join(args.message))
+    print 'reminder saved as', next_key
+
+  def DoShow(self, args):
+    if args.key:
+      map(self._ShowNag, args.key)
+    else:
+      if not self._ShowAllNags():
+        print 'no reminders set'
+
+  def DoMaybe(self, args):
+    if os.path.isfile(self.timestamp):
+      now = time.time()
+      then = os.path.getmtime(self.timestamp)
+      if (now - then) < self.nag_interval:
+        return
+    self._ShowAllNags()
+    self._UpdateTimestamp()
+
+  def DoRm(self, args):
+    for key in args.key:
+      filename = self._NagFile(key)
+      if os.path.isfile(filename):
+        os.unlink(filename)
+
+  def DoHelp(self, args):
+    print """\
 Add the following to your .bashrc:
 
   PROMPT_COMMAND='nag ps1'
 
-Set a reminder message named X with:
+Create a new reminder:
 
-  nag X my message
+  nag me My free text reminder.
 
 Clear the remidner with
 
-  nag rm X
-EOF
-  ) | ${PAGER:-less}
-}
+  nag rm X"""
 
-show_or_set_nag() {
-  if [[ $# == 1 ]]; then
-    show_nag $1
-  else
-    set_nag $@
-  fi
-}
+  def _SetNag(self, key, content):
+    filename = self._NagFile(key)
+    with open(filename, 'w') as stream:
+      stream.write(content)
 
-show_nag() {
-  local file=$NAG_FILE_DIR/$1
-  if [[ -f $file ]]; then
-    cat $file
-    return
-  fi
-  die "no nag named '$1'"
-}
+  def _ShowNag(self, key):
+    nag_file = self._NagFile(key)
+    if os.path.isfile(nag_file):
+      print '%s: %s' % (key, open(nag_file).read().rstrip())
 
-set_nag() {
-  local key=$1; shift
-  local file=$NAG_FILE_DIR/$key
-  echo "$@" > $NAG_FILE_DIR/$key
-  touch $TIMESTAMP
-}
+  def _ShowAllNags(self):
+    keys = self._SortedNagKeys()
+    for key in keys:
+      self._ShowNag(key)
+    self._UpdateTimestamp()
+    return bool(keys)
 
-push_nag() {
-  local last_key=$(nag_keys | tail -1)
-  log last_key = $last_key
-}
+  def _NagFile(self, key):
+    return os.path.join(self.nag_file_dir, key)
 
-rm_nags() {
-  local key
-  for key in $@; do
-    [[ $key != */* ]]
-    rm -f $NAG_FILE_DIR/$key
-  done
-}
+  def _SortedNagKeys(self):
+    names = os.listdir(self.nag_file_dir)
+    self.key_sequence.Sort(names)
+    return names
 
-maybe_show_nags() {
-  local now=$(date +%s)
-  local then=$(date +%s -r $TIMESTAMP)
-  if (( now - then > $NAG_INTERVAL )); then
-    show_nags_1
-  fi
-}
+  def _UpdateTimestamp(self):
+    open(self.timestamp, 'w').close()
 
-show_nags() {
-  if [[ $# == 0 ]]; then
-    if ! show_nags_1; then
-      log "no nags"
-    fi
-  else
-    for key in $@; do
-      local file=$NAG_FILE_DIR/$key
-      if [[ -f $file ]]; then
-	cat $file
-      else
-	log "no nag named '$1'"
-      fi
-    done
-  fi
-}
 
-show_nags_1() {
-  local key result=1
-  for file in $(find $NAG_FILE_DIR -type f | sort -n); do
-    echo "${file##*/}: $(cat $file)"
-    result=0
-  done
-  touch $TIMESTAMP
-  return $result
-}
+class KeySequence(object):
 
-nag_keys() {
-  find $NAG_FILE_DIR -type f | sort -n | sed 's:.*/::g'
-}
+  def SortKey(self, name):
+    assert self.IsValid(name)
+    if IsNumberString(name):
+      return (0, int(name))
+    else:
+      return (1, name)
 
-log() {
-  echo "$(basename $0): $@" >&2
-}
+  def Sort(self, seq):
+    seq.sort(key=self.SortKey)
 
-die() {
-  log "$@"
-  exit 1
-}
+  def IsValid(self, name):
+    return re.match(r'[a-z]|\d+', name)
 
-main "$@"
+  def First(self):
+    return 'a'
+
+  def Next(self, name):
+    assert self.IsValid(name)
+    if name == 'z':
+      return '0'
+    elif IsNumberString(name):
+      return str(int(name) + 1)
+    else:
+      return chr(ord(name) + 1)
+
+
+def IsNumberString(s):
+  return bool(re.match(r'\d+', s))
+
+
+if __name__ == '__main__': main()
