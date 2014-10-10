@@ -1,151 +1,41 @@
-#! /bin/bash
+#! /usr/bin/python
 
-set -e
-set -x
-
-REAL_BASH_VERSION=$BASH_VERSION
-REAL_LOGNAME=$LOGNAME
-unset FOO LOCAL_VAR
-
-global() {
-  declare -g $1
-}
-
-local_x() {
-  declare -x $1
-}
-
-getenv() {
-  env bash -c "echo \$$1"
-}
-
-func_test() {
-  [[ $LOGNAME == $REAL_LOGNAME ]]
-  local LOGNAME
-  [[ $LOGNAME == '' ]]
-  [[ $(getenv LOGNAME) == $REAL_LOGNAME ]]
-
-  export FOO=env_foo
-  [[ $FOO == env_foo ]]
-  [[ $(getenv FOO) == env_foo ]]
-
-  export BASH_VERSION=fake_bash_version
-  [[ $BASH_VERSION == fake_bash_version ]]
-  [[ $(getenv BASH_VERSION) == $REAL_BASH_VERSION ]]
-
-  local LOCAL_VAR=local_value
-
-  inner_func_test
-}
-
-inner_func_test() {
-  [[ $LOCAL_VAR == local_value ]]
-
-  (
-    [[ $BASH_VERSION == fake_bash_version ]]
-    [[ $(getenv BASH_VERSION) == $REAL_BASH_VERSION ]]
-    [[ $FOO == env_foo ]]
-    [[ $(getenv FOO) == env_foo ]]
-  )
-
-  (
-    declare FOO=local_foo
-    (
-      [[ $FOO == local_foo ]]
-      [[ $(getenv FOO) == local_foo ]]
-    )
-  )
-
-  (
-    declare +x FOO=local_foo
-    (
-      [[ $FOO == local_foo ]]
-      [[ $(getenv FOO) == env_foo ]]
-    )
-  )
-
-  (
-    unset FOO
-    FOO=local_foo
-    (
-      [[ $FOO == local_foo ]]
-      [[ $(getenv FOO) == '' ]]
-    )
-  )
+import nag
+import expect
+import unittest
+import random
 
 
-  (
-    local_x FOO=local_foo
-    (
-      [[ $FOO == env_foo ]]
-      [[ $(getenv FOO) == env_foo ]]
-    )
-  )
+INITIAL_KEYS = list('abcdefghijklmnopqrstuvwxyz') + map(str, range(1, 100))
+BAD_KEYS = list('*/:.A0') + ['aa', '01']
 
-  (
-    global FOO=local_foo
-    (
-      [[ $FOO == local_foo ]]
-      [[ $(getenv FOO) == local_foo ]]
-    )
-  )
-}
+class KeySequenceTest(expect.TestCase):
 
-func_test
+  def setUp(self):
+    self.seq = nag.KeySequence()
 
-export FOO=env_foo
-[[ $FOO == env_foo ]]
-[[ $(getenv FOO) == env_foo ]]
+  def testIsValid(self):
+    for key in BAD_KEYS:
+      self.Expect(key).Not().ToSatisfy(self.seq.IsValid)
+    for key in INITIAL_KEYS:
+      self.Expect(key).ToSatisfy(self.seq.IsValid)
 
-export BASH_VERSION=fake_bash_version
-[[ $BASH_VERSION == fake_bash_version ]]
-[[ $(getenv BASH_VERSION) == $REAL_BASH_VERSION ]]
+  def testFirstAndNext(self):
+    self.Expect(self.seq.Next('a')).ToEqual('b')
+    self.Expect(self.seq.Next('z')).ToEqual('1')
+    self.Expect(self.seq.Next('1')).ToEqual('2')
 
-(
-  [[ $BASH_VERSION == fake_bash_version ]]
-  [[ $(getenv BASH_VERSION) == $REAL_BASH_VERSION ]]
-  [[ $FOO == env_foo ]]
-  [[ $(getenv FOO) == env_foo ]]
-)
+    actual = self.seq.First()
+    for expected in INITIAL_KEYS:
+      self.Expect(actual).ToEqual(expected)
+      actual = self.seq.Next(actual)
 
-(
-  declare FOO=local_foo
-  (
-    [[ $FOO == local_foo ]]
-    [[ $(getenv FOO) == local_foo ]]
-  )
-)
+  def testSort(self):
+    r = random.WichmannHill(0)
+    for i in range(100):
+      key_list = list(INITIAL_KEYS)
+      r.shuffle(key_list)
+      self.seq.Sort(key_list)
+      self.Expect(key_list).ToEqual(INITIAL_KEYS)
 
-(
-  declare +x FOO=local_foo
-  (
-    [[ $FOO == local_foo ]]
-    [[ $(getenv FOO) == '' ]]
-  )
-)
-
-(
-  unset FOO
-  FOO=local_foo
-  (
-    [[ $FOO == local_foo ]]
-    [[ $(getenv FOO) == '' ]]
-  )
-)
-
-
-(
-  local_x FOO=local_foo
-  (
-    [[ $FOO == env_foo ]]
-    [[ $(getenv FOO) == env_foo ]]
-  )
-)
-
-(
-  global FOO=local_foo
-  (
-    [[ $FOO == local_foo ]]
-    [[ $(getenv FOO) == local_foo ]]
-  )
-)
+if __name__ == '__main__': unittest.main()

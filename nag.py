@@ -21,10 +21,11 @@ class App(object):
   def __init__(self):
     self.key_sequence = KeySequence()
     self.nag_interval = 300
+    self.nag_header = '\nReminders:'
 
-    for path in xdgbase.load_config_paths(APP_NAME, 'config.py'):
-      with file(path) as stream:
-        exec stream in self.__dict__
+    # for path in xdgbase.load_config_paths(APP_NAME, 'config.py'):
+    #   with file(path) as stream:
+    #     exec stream in self.__dict__
 
     self.nag_home = xdgbase.save_config_path(APP_NAME)
     self.nag_file_dir = xdgbase.save_config_path(APP_NAME, 'files')
@@ -87,8 +88,7 @@ class App(object):
     if args.key:
       map(self._ShowNag, args.key)
     else:
-      if not self._ShowAllNags():
-        print 'no reminders set'
+      self._ShowAllNags()
 
   def DoMaybe(self, args):
     if os.path.isfile(self.timestamp):
@@ -96,7 +96,11 @@ class App(object):
       then = os.path.getmtime(self.timestamp)
       if (now - then) < self.nag_interval:
         return
-    self._ShowAllNags()
+    keys = self._SortedNagKeys()
+    if keys:
+      print self.nag_header
+      for key in keys:
+        self._ShowNag(key)
     self._UpdateTimestamp()
 
   def DoRm(self, args):
@@ -134,7 +138,8 @@ Clear the remidner with
     for key in keys:
       self._ShowNag(key)
     self._UpdateTimestamp()
-    return bool(keys)
+    if not keys:
+      print 'no reminders set'
 
   def _NagFile(self, key):
     return os.path.join(self.nag_file_dir, key)
@@ -153,15 +158,15 @@ class KeySequence(object):
   def SortKey(self, name):
     assert self.IsValid(name)
     if IsNumberString(name):
-      return (0, int(name))
+      return (1, int(name))
     else:
-      return (1, name)
+      return (0, name)
 
   def Sort(self, seq):
     seq.sort(key=self.SortKey)
 
   def IsValid(self, name):
-    return re.match(r'[a-z]|\d+', name)
+    return bool(re.match(r'^(?:[a-z]|[1-9]\d*)$', name))
 
   def First(self):
     return 'a'
@@ -169,7 +174,7 @@ class KeySequence(object):
   def Next(self, name):
     assert self.IsValid(name)
     if name == 'z':
-      return '0'
+      return '1'
     elif IsNumberString(name):
       return str(int(name) + 1)
     else:

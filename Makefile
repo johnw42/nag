@@ -4,8 +4,8 @@ LOCAL = ~/.local
 BINDIR = $(LOCAL)/bin
 
 test:
-	./nag_test 2>/dev/null
+	./nag_test
 
-install: nag test
+install: nag.py test
 	install -d $(BINDIR)
-	install -t $(BINDIR) nag
+	install -T nag.py $(BINDIR)/nag
